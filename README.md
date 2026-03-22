@@ -1,5 +1,6 @@
 # CyTrack
 
+This is a personal 
 
 ![Version](https://img.shields.io/badge/version-1.0-green)
 
@@ -47,6 +48,9 @@ For development and single-user use you can open **http://localhost:8050** in yo
 
 To run as an accessible server you can use a service like https://render.com/ or https://www.heroku.com/ or run internally on your network.
 
+Quick note: CyTrack is a personal side project which I built in my own time with my own resources, and isn't connected to my employer in any way. Just sharing something I found useful and thought others in the community might too!
+
+Important: this tool is not designed for sensitive or proprietary data. Before using it, please check your own institution's data policies. If your data is sensitive, regulated, or commercially confidential, please do not use CyTrack until you've confirmed it's appropriate to do so.
 
 ## Requirements
 
