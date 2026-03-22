@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Claude Code
+.claude/
+
+# Conda / virtual environments
+*.egg-info/
+.env
+.venv/
+env/
+
+# Culture data (user-generated, not source code)
+cultures/
+
+# OS
+.DS_Store
+Thumbs.db
