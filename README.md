@@ -1,7 +1,5 @@
 # CyTrack
 
-This is a personal 
-
 ![Version](https://img.shields.io/badge/version-1.0-green)
 
 A lightweight confluency tracker for both cell line and organoid cultures. Upload brightfield images, get automated segmentation and confluency measurements, and track proliferation dynamics across passage cycles over time. Built for lab teams or individuals, host it on a shared server or a shared PC and uses can review cultures from their browser.
