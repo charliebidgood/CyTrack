@@ -1,4 +1,8 @@
 # CyTrack
+
+
+![Version](https://img.shields.io/badge/version-1.0-green)
+
 A lightweight confluency tracker for both cell line and organoid cultures. Upload brightfield images, get automated segmentation and confluency measurements, and track proliferation dynamics across passage cycles over time. Built for lab teams or individuals, host it on a shared server or a shared PC and uses can review cultures from their browser.
 
 I designed this as an experiment to get familiar with Claude Code over a weekend (https://code.claude.com/). Both the Opus 4.6 (for complex tasks) and Sonnet 4.6 models (for simple design tasks) were used throughout the project. CyTrack was written with the Dash python framework (https://dash.plotly.com/) as I was already familiar with the tool. The Cellpose "Cyto3" model is also used to segment images by default (https://github.com/mouseland/cellpose).
@@ -6,7 +10,7 @@ I designed this as an experiment to get familiar with Claude Code over a weekend
 
 ## Features
 - **Segmentation** - Use either Cellpose (deep learning) or Otsu (traditional thresholding).
-- **Confluency tracking** — Confluency plots with passage annotations and colour-coded proliferation cycles
+- **Confluency tracking** - Confluency plots with passage annotations and colour-coded proliferation cycles
 - **Logging** - View per-passage growth status, compare proliferation dynamics
 - **Cell lines & organoids** - works with any brightfield culture imaging workflow
 - **Measurement log** - full history with date, passage, confluency, segmentation method, and delta tracking
@@ -23,8 +27,8 @@ I designed this as an experiment to get familiar with Claude Code over a weekend
 ## Install
 ```bash
 # Clone with git and change into a new directory 
-git clone https://github.com/charliebidgood/cytrack-dash.git
-cd cytrack-dash
+git clone https://github.com/charliebidgood/CyTrack
+cd CyTrack
 
 # Recommended: Create a new conda environment
 conda create -n cytrack python=3.10
@@ -32,14 +36,16 @@ conda create -n cytrack python=3.10
 # Activate, you may need to use "source activate" in some cases
 conda activate cytrack
 
-# Install required python dependencies
+# Install the required python dependencies
 pip install -r requirements.txt
 
 # Run - debug mode is turned off by default
 python app.py
 ```
 
-Open **http://localhost:8050** in your browser. If this doesn't work check the terminal output for the correct port. 
+For development and single-user use you can open **http://localhost:8050** in your browser. If this doesn't work check the terminal output for the correct port. 
+
+To run as an accessible server you can use a service like https://render.com/ or https://www.heroku.com/ or run internally on your network.
 
 
 ## Requirements
