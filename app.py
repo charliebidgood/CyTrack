@@ -1,5 +1,7 @@
 import base64
+import csv
 import os
+import threading
 import uuid
 from datetime import datetime
 import dash
@@ -8,7 +10,55 @@ import plotly.graph_objects as go
 import storage
 import analysis
 
-VERSION = "1.0"
+seg_jobs = {}  # job_id -> {status, progress, total, message}
+
+
+def run_seg_folder(job_id, input_dir, output_dir, method):
+    """Background thread: segment every image in input_dir and write results.csv."""
+    exts = {".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"}
+    try:
+        images = sorted(
+            f for f in os.listdir(input_dir)
+            if os.path.splitext(f.lower())[1] in exts
+        )
+    except Exception as exc:
+        seg_jobs[job_id].update(status="error", message=f"Cannot read directory: {exc}")
+        return
+
+    if not images:
+        seg_jobs[job_id].update(status="error", message="No image files found in that directory.")
+        return
+
+    os.makedirs(output_dir, exist_ok=True)
+    images_dir = os.path.join(output_dir, "images")
+    os.makedirs(images_dir, exist_ok=True)
+    total = len(images)
+    seg_jobs[job_id].update(total=total, status="running")
+
+    results = []
+    for i, fname in enumerate(images):
+        img_path = os.path.join(input_dir, fname)
+        seg_jobs[job_id]["message"] = f"Processing {i + 1}/{total}: {fname}"
+        try:
+            r = analysis.analyse_image(img_path, images_dir, method=method)
+            results.append({"img_name": fname, "method": r["method"],
+                            "confluency": round(r["confluency"], 2)})
+        except Exception as exc:
+            results.append({"img_name": fname, "method": method, "confluency": "error"})
+        seg_jobs[job_id]["progress"] = i + 1
+
+    csv_path = os.path.join(output_dir, "results.csv")
+    with open(csv_path, "w", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=["img_name", "method", "confluency"])
+        writer.writeheader()
+        writer.writerows(results)
+
+    seg_jobs[job_id].update(
+        status="done",
+        message=f"Done — {total} image(s) processed. results.csv saved to output folder.",
+    )
+
+VERSION = "1.1"
 
 # App setup
 app = dash.Dash(__name__, suppress_callback_exceptions=True)
@@ -56,6 +106,8 @@ def make_layout():
         dcc.Store(id="refresh-trigger", data=0),
         dcc.Store(id="overlay-data", data=None),
         dcc.Store(id="editing-entry", data=None),  # entry id being edited
+        dcc.Store(id="seg-folder-job-id", data=None),
+        dcc.Interval(id="seg-folder-poll", interval=500, n_intervals=0, disabled=True),
 
         # --- Sidebar ---
         html.Div(id="sidebar", children=[
@@ -65,6 +117,7 @@ def make_layout():
             ]),
             html.Div(id="sidebar-cultures"),
             html.Button("+ New Culture", id="sidebar-add-btn", n_clicks=0),
+            html.Button("Segment Folder", id="btn-seg-folder", n_clicks=0),
         ]),
 
         # --- Main area ---
@@ -76,6 +129,7 @@ def make_layout():
         html.Div(id="modal-container"),
         html.Div(id="edit-modal-container"),
         html.Div(id="culture-edit-modal"),
+        html.Div(id="seg-folder-modal-container"),
     ])
 
 
@@ -230,6 +284,12 @@ def render_culture_detail(culture_id, overlay_data=None):
             accept="image/*",
             children=html.Button("Upload Image", className="btn-primary"),
             style={"display": "inline-block"},
+        ),
+        dcc.Loading(
+            id="upload-loading",
+            type="dot",
+            color="#00e5a0",
+            children=html.Div(id="upload-status"),
         ),
     ])
 
@@ -696,10 +756,29 @@ def update_passage(value, culture_id, trigger):
 
 
 
+# --- Upload status hint (fires immediately on file select, before analysis runs) ---
+app.clientside_callback(
+    """
+    function(contents, method) {
+        if (!contents) return "";
+        if (method === "cellpose") {
+            return "Analysing — Cellpose may take some time…";
+        }
+        return "Analysing…";
+    }
+    """,
+    Output("upload-status", "children", allow_duplicate=True),
+    Input("image-upload", "contents"),
+    State("method-dropdown", "value"),
+    prevent_initial_call=True,
+)
+
+
 # --- Image upload → analysis ---
 @callback(
     Output("refresh-trigger", "data", allow_duplicate=True),
     Output("overlay-data", "data", allow_duplicate=True),
+    Output("upload-status", "children"),
     Input("image-upload", "contents"),
     State("image-upload", "filename"),
     State("selected-culture", "data"),
@@ -710,11 +789,11 @@ def update_passage(value, culture_id, trigger):
 )
 def handle_upload(contents, filename, culture_id, upload_date, method, trigger):
     if not contents or not culture_id:
-        return no_update, no_update
+        return no_update, no_update, no_update
 
     culture = storage.get_culture(culture_id)
     if not culture:
-        return no_update, no_update
+        return no_update, no_update, no_update
 
     # Decode and save the uploaded image
     img_dir = storage.get_image_dir(culture_id)
@@ -762,7 +841,7 @@ def handle_upload(contents, filename, culture_id, upload_date, method, trigger):
         "raw_url": f"/cultures/{rel_raw_png}",
     }
 
-    return (trigger or 0) + 1, overlay_data
+    return (trigger or 0) + 1, overlay_data, ""
 
 
 # --- Dismiss overlay ---
@@ -1087,7 +1166,242 @@ def cancel_culture_edit(n):
 
 
 # ---------------------------------------------------------------------------
+# Segment-folder modal helpers
+# ---------------------------------------------------------------------------
+
+def seg_folder_form(input_dir="", output_dir="", method="cellpose", error=""):
+    browse_style = {
+        "padding": "8px 14px", "fontSize": "12px", "fontWeight": "600",
+        "background": "#7c3aed", "color": "#fff", "border": "none",
+        "borderRadius": "8px", "cursor": "pointer", "whiteSpace": "nowrap",
+    }
+    return html.Div(className="modal-backdrop", children=[
+        html.Div(className="modal-card", children=[
+            html.Div("Segment Folder", className="modal-title"),
+            html.Div(className="form-group", children=[
+                html.Label("Input Directory", className="form-label"),
+                html.Div(style={"display": "flex", "gap": "6px"}, children=[
+                    dcc.Input(id="seg-input-dir", className="form-input",
+                              placeholder="C:\\path\\to\\images", value=input_dir,
+                              style={"flex": "1"}),
+                    html.Button("Browse", id="btn-browse-input", n_clicks=0,
+                                style=browse_style),
+                ]),
+            ]),
+            html.Div(className="form-group", children=[
+                html.Label("Output Directory", className="form-label"),
+                html.Div(style={"display": "flex", "gap": "6px"}, children=[
+                    dcc.Input(id="seg-output-dir", className="form-input",
+                              placeholder="C:\\path\\to\\output", value=output_dir,
+                              style={"flex": "1"}),
+                    html.Button("Browse", id="btn-browse-output", n_clicks=0,
+                                style=browse_style),
+                ]),
+            ]),
+            html.Div(className="form-group", children=[
+                html.Label("Method", className="form-label"),
+                dcc.Dropdown(
+                    id="seg-method",
+                    options=[
+                        {"label": "Otsu", "value": "otsu"},
+                        {"label": "Cellpose", "value": "cellpose"},
+                    ],
+                    value=method,
+                    clearable=False,
+                    className="status-select",
+                ),
+            ]),
+            html.Div(error, style={
+                "color": "var(--status-terminated)", "fontSize": "12px",
+                "marginBottom": "8px", "minHeight": "16px",
+            }),
+            html.Div(className="modal-actions", children=[
+                html.Button("Cancel", id="btn-seg-cancel", className="btn-secondary", n_clicks=0),
+                html.Button("Start", id="btn-seg-start", className="btn-primary", n_clicks=0),
+            ]),
+        ]),
+    ])
+
+
+def seg_folder_progress(job):
+    total = max(job.get("total", 1), 1)
+    progress = job.get("progress", 0)
+    pct = int(progress / total * 100)
+    status = job.get("status", "running")
+    message = job.get("message", "Starting…")
+    is_done = status == "done"
+    is_error = status == "error"
+    bar_color = "#00e5a0" if is_done else ("#e05555" if is_error else "#5b8def")
+
+    return html.Div(className="modal-backdrop", children=[
+        html.Div(className="modal-card", children=[
+            html.Div("Segment Folder", className="modal-title"),
+            html.Div(style={"marginBottom": "20px"}, children=[
+                html.Div(
+                    style={
+                        "display": "flex", "justifyContent": "space-between",
+                        "marginBottom": "8px", "fontSize": "12px",
+                        "color": "var(--text-sec)",
+                    },
+                    children=[html.Span(message), html.Span(f"{pct}%")],
+                ),
+                html.Div(
+                    style={
+                        "background": "#1a2332", "borderRadius": "4px",
+                        "height": "8px", "overflow": "hidden",
+                    },
+                    children=[
+                        html.Div(style={
+                            "width": f"{pct}%", "height": "100%",
+                            "background": bar_color, "borderRadius": "4px",
+                            "transition": "width 0.4s ease",
+                        }),
+                    ],
+                ),
+            ]),
+            html.Div(className="modal-actions", children=[
+                html.Button(
+                    "Close" if (is_done or is_error) else "Running…",
+                    id="btn-seg-close",
+                    className="btn-primary" if (is_done or is_error) else "btn-secondary",
+                    n_clicks=0,
+                    disabled=not (is_done or is_error),
+                ),
+            ]),
+        ]),
+    ])
+
+
+# ---------------------------------------------------------------------------
+# Segment-folder callbacks
+# ---------------------------------------------------------------------------
+
+@callback(
+    Output("seg-folder-modal-container", "children"),
+    Input("btn-seg-folder", "n_clicks"),
+    prevent_initial_call=True,
+)
+def open_seg_folder_modal(n):
+    if not n:
+        return no_update
+    return seg_folder_form()
+
+
+def open_folder_dialog():
+    """Open a native Windows Explorer folder picker and return the chosen path."""
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    folder = filedialog.askdirectory(title="Select Folder")
+    root.destroy()
+    return folder or ""
+
+
+@callback(
+    Output("seg-input-dir", "value"),
+    Input("btn-browse-input", "n_clicks"),
+    State("seg-input-dir", "value"),
+    prevent_initial_call=True,
+)
+def browse_input_dir(n, current):
+    if not n:
+        return no_update
+    chosen = open_folder_dialog()
+    return chosen if chosen else (current or no_update)
+
+
+@callback(
+    Output("seg-output-dir", "value"),
+    Input("btn-browse-output", "n_clicks"),
+    State("seg-output-dir", "value"),
+    prevent_initial_call=True,
+)
+def browse_output_dir(n, current):
+    if not n:
+        return no_update
+    chosen = open_folder_dialog()
+    return chosen if chosen else (current or no_update)
+
+
+@callback(
+    Output("seg-folder-modal-container", "children", allow_duplicate=True),
+    Output("seg-folder-job-id", "data"),
+    Output("seg-folder-poll", "disabled"),
+    Input("btn-seg-start", "n_clicks"),
+    State("seg-input-dir", "value"),
+    State("seg-output-dir", "value"),
+    State("seg-method", "value"),
+    prevent_initial_call=True,
+)
+def start_seg_folder(n, input_dir, output_dir, method):
+    if not n:
+        return no_update, no_update, no_update
+
+    input_dir = (input_dir or "").strip()
+    output_dir = (output_dir or "").strip()
+    method = method or "cellpose"
+
+    if not input_dir:
+        return seg_folder_form(input_dir, output_dir, method, "Input directory is required."), no_update, no_update
+    if not os.path.isdir(input_dir):
+        return seg_folder_form(input_dir, output_dir, method, "Input directory does not exist."), no_update, no_update
+    if not output_dir:
+        return seg_folder_form(input_dir, output_dir, method, "Output directory is required."), no_update, no_update
+
+    job_id = str(uuid.uuid4())[:8]
+    seg_jobs[job_id] = {"status": "running", "progress": 0, "total": 0, "message": "Starting…"}
+
+    threading.Thread(
+        target=run_seg_folder,
+        args=(job_id, input_dir, output_dir, method),
+        daemon=True,
+    ).start()
+
+    return seg_folder_progress(seg_jobs[job_id]), job_id, False
+
+
+@callback(
+    Output("seg-folder-modal-container", "children", allow_duplicate=True),
+    Output("seg-folder-poll", "disabled", allow_duplicate=True),
+    Input("seg-folder-poll", "n_intervals"),
+    State("seg-folder-job-id", "data"),
+    prevent_initial_call=True,
+)
+def poll_seg_folder(_, job_id):
+    if not job_id or job_id not in seg_jobs:
+        return no_update, True
+    job = seg_jobs[job_id]
+    done = job["status"] in ("done", "error")
+    return seg_folder_progress(job), done
+
+
+@callback(
+    Output("seg-folder-modal-container", "children", allow_duplicate=True),
+    Output("seg-folder-poll", "disabled", allow_duplicate=True),
+    Input("btn-seg-cancel", "n_clicks"),
+    prevent_initial_call=True,
+)
+def cancel_seg_folder(n):
+    if n:
+        return None, True
+    return no_update, no_update
+
+
+@callback(
+    Output("seg-folder-modal-container", "children", allow_duplicate=True),
+    Input("btn-seg-close", "n_clicks"),
+    prevent_initial_call=True,
+)
+def close_seg_folder(n):
+    if n:
+        return None
+    return no_update
+
+
+# ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    app.run(debug=False, host="0.0.0.0", port=8050)
+    app.run(debug=True, host="0.0.0.0", port=8050)

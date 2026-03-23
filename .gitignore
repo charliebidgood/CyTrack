@@ -5,6 +5,7 @@ __pycache__/
 
 # Claude Code
 .claude/
+CLAUDE.md
 
 # Conda / virtual environments
 *.egg-info/

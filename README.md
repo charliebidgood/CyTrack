@@ -1,13 +1,17 @@
 # CyTrack
 
-![Version](https://img.shields.io/badge/version-1.0-green)
+![Version](https://img.shields.io/badge/version-1.1-green)
 
 A lightweight confluency tracker for both cell line and organoid cultures. Upload brightfield images, get automated segmentation and confluency measurements, and track proliferation dynamics across passage cycles over time. Built for lab teams or individuals, host it on a shared server or a shared PC and uses can review cultures from their browser.
 
 I designed this as an experiment to get familiar with Claude Code over a weekend (https://code.claude.com/). Both the Opus 4.6 (for complex tasks) and Sonnet 4.6 models (for simple design tasks) were used throughout the project. CyTrack was written with the Dash python framework (https://dash.plotly.com/) as I was already familiar with the tool. The Cellpose "Cyto3" model is also used to segment images by default (https://github.com/mouseland/cellpose).
 
+![CyTrack Screenshot](assets/screenshot.png)
+
 
 ## Features
+- #### New Feature (v1.1) - Segment an entire folder using the "Segment Folder" button to quantify confluence on an existing image directory
+
 - **Segmentation** - Use either Cellpose (deep learning) or Otsu (traditional thresholding).
 - **Confluency tracking** - Confluency plots with passage annotations and colour-coded proliferation cycles
 - **Logging** - View per-passage growth status, compare proliferation dynamics
@@ -20,7 +24,6 @@ I designed this as an experiment to get familiar with Claude Code over a weekend
 
 
 ![CyTrack Screenshot](assets/app-demo.png)
-
 
 
 ## Install
